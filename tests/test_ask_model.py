@@ -1,3 +1,4 @@
+import os
 import unittest
 
 from ask_model import answer_object, schema_errors
