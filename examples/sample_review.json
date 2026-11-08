@@ -1,0 +1,34 @@
+{
+ "summary": "Two real bugs in the cart; the rest looks sound.",
+ "findings": [
+  {
+   "title": "Discount applied twice when coupon is re-added",
+   "severity": "high",
+   "confidence": "high",
+   "kind": "bug",
+   "file": "src/cart.py",
+   "symbol": "Cart.apply_coupon",
+   "evidence": "self.discount += coupon.percent",
+   "situation": "A user applies the 10% coupon, then applies it again: the discount becomes 20% because the coupon is not recorded as used.",
+   "fix": "Ignore a coupon whose code is already in self.coupons, and set the discount from the coupon list instead of adding.",
+   "test_file": "tests/test_cart.py",
+   "related": []
+  },
+  {
+   "title": "Empty cart total divides by zero",
+   "severity": "medium",
+   "confidence": "medium",
+   "kind": "bug",
+   "file": "src/cart.py",
+   "symbol": "Cart.average_price",
+   "evidence": "return self.total() / len(self.items)",
+   "situation": "average_price() on an empty cart raises ZeroDivisionError.",
+   "fix": "Return 0.0 when the cart has no items.",
+   "test_file": "tests/test_cart.py",
+   "related": ["src/pricing.py:round_money"]
+  }
+ ],
+ "checked_ok": [
+  "Cart.add_item merges quantities for the same sku correctly"
+ ]
+}
