@@ -1,0 +1,109 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "findings",
+    "checked_ok"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "One or two sentences: the overall assessment."
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "title",
+          "severity",
+          "confidence",
+          "kind",
+          "file",
+          "symbol",
+          "evidence",
+          "situation",
+          "fix",
+          "test_file",
+          "related"
+        ],
+        "properties": {
+          "title": {
+            "type": "string",
+            "description": "At most 12 words naming the problem."
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ],
+            "description": "Impact in play or on the project if real."
+          },
+          "confidence": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low",
+              "guess"
+            ],
+            "description": "How sure you are that it is real."
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "bug",
+              "latent",
+              "design",
+              "performance",
+              "test-gap",
+              "docs"
+            ]
+          },
+          "file": {
+            "type": "string",
+            "description": "Repository path of the file, exactly as given in the FILE headers."
+          },
+          "symbol": {
+            "type": "string",
+            "description": "The function, method or class (for example Cart.add_item)."
+          },
+          "evidence": {
+            "type": "string",
+            "description": "One to three lines of code copied exactly, character for character, from that file, that show the problem. Never paraphrase or reconstruct code."
+          },
+          "situation": {
+            "type": "string",
+            "description": "The concrete inputs or state and what goes wrong."
+          },
+          "fix": {
+            "type": "string",
+            "description": "What to change."
+          },
+          "test_file": {
+            "type": "string",
+            "description": "Repository path of the existing test file where a test for this belongs (one of the FILE headers if shown; otherwise your best guess, for example tests/test_settings.py)."
+          },
+          "related": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Other code a fix must read or change, as path:Symbol (for example src/menu.py:Menu.back). Empty if none."
+          }
+        }
+      }
+    },
+    "checked_ok": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Things you examined and found correct, one short line each."
+    }
+  }
+}
