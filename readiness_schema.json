@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ready", "bug_visible", "context_missing", "test_file_ok", "better_test_file", "fix_sound", "problems"],
+  "properties": {
+    "ready": {"type": "boolean", "description": "True only if a fixer given exactly this finding and this code can make the fix and a test that fails without it."},
+    "bug_visible": {"type": "boolean", "description": "The code shown demonstrates the reported problem (not just mentions it)."},
+    "context_missing": {"type": "array", "items": {"type": "string"}, "description": "Code a fixer needs but wasn't shown, as path:Class.member (members, constants and variables too). Empty if nothing."},
+    "test_file_ok": {"type": "boolean", "description": "The test file can host a test for this: right level (a unit test for pure logic; an integration or end-to-end test when the setup needs more) and the setup it needs exists there."},
+    "better_test_file": {"type": "string", "description": "A better existing test file path from the list, or empty."},
+    "fix_sound": {"type": "boolean", "description": "The suggested fix would solve the problem without breaking intended behaviour, and can be tested the way that test file feeds input."},
+    "problems": {"type": "array", "items": {"type": "string"}, "description": "Each concrete problem with the finding as a fix task, one short sentence each."}
+  }
+}
