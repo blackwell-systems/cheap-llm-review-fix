@@ -5,7 +5,7 @@ import os
 import tempfile
 import unittest
 
-from merge_reviews import evidence_found, passes_checks, symbol_check, write_batch
+from merge_reviews import evidence_found, passes_checks, symbol_check, symbol_column, write_batch
 
 SOURCE = '''def add(a, b):
     total = a + b
@@ -51,6 +51,25 @@ class SymbolCheckTest(RepoTest):
             handle.write("def add(a)\n  a\nend\n")
         self.assertEqual(symbol_check(self.root, "a.rb", "add", "a"), "symbol not found")
         self.assertEqual(symbol_check(self.root, "a.rb", "add", "a", skip=True), "not checked")
+
+
+class SymbolColumnTest(RepoTest):
+    def finding(self, test_file):
+        return {"file": "src/m.py", "symbol": "add", "evidence": "total = a + b", "test_file": test_file}
+
+    def test_existing_test_file_adds_nothing(self):
+        with open(os.path.join(self.root, "test_m.py"), "w") as handle:
+            handle.write("")
+        self.assertEqual(symbol_column(self.root, self.finding("test_m.py")), "L1-L3")
+
+    def test_missing_test_file_is_flagged_in_the_symbol_column(self):
+        self.assertEqual(symbol_column(self.root, self.finding("tests/nope.py")),
+                         "L1-L3; test file tests/nope.py not found")
+
+    def test_flag_survives_skipped_symbols_and_no_test_file_is_fine(self):
+        self.assertEqual(symbol_column(self.root, self.finding("x.py"), skip=True),
+                         "not checked; test file x.py not found")
+        self.assertEqual(symbol_column(self.root, self.finding("")), "L1-L3")
 
 
 class EvidenceTest(RepoTest):
@@ -107,6 +126,15 @@ class WriteBatchTest(unittest.TestCase):
         self.assertEqual([c["_id"] for c in self.batch(groups, {"1"})], ["1a", "1b", "2a"])
         self.assertEqual([c["_id"] for c in self.batch(groups, {"1b"})], ["1b", "2a"])
         self.assertEqual([c["_id"] for c in self.batch(groups, {"2b"})], ["2a", "2b"])
+
+    def test_missing_test_file_stays_out_of_the_auto_batch_but_can_be_confirmed(self):
+        flagged = "L1-L3; test file tests/t.py not found"
+        groups = [{"key": ("f", "add"), "title": "t", "findings": [
+            finding("1a", "mimo", symbol=flagged), finding("1b", "glm", symbol=flagged)]},
+            {"key": ("f", "sub"), "title": "t", "findings": [finding("2a", "mimo"), finding("2b", "glm")]}]
+        self.assertEqual([c["_id"] for c in self.batch(groups, set())], ["2a", "2b"])
+        self.assertEqual([c["_id"] for c in self.batch(groups, {"1"})], ["1a", "1b", "2a", "2b"])
+        self.assertFalse(passes_checks(finding("1a", "m", symbol="not checked; test file x.py not found")))
 
     def test_passes_checks(self):
         self.assertTrue(passes_checks(finding("1a", "m", symbol="not checked")))

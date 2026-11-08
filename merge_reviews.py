@@ -10,7 +10,9 @@ normalisation) is flagged, which usually means the model reconstructed or
 invented the code it is talking about. Each finding's `symbol` is also
 located (a function, method, class or constant of that name) and given its line range,
 flagged when the symbol doesn't exist or the evidence sits outside it (a
-finding filed under the wrong function). The lead still verifies every claim;
+finding filed under the wrong function). A `test_file` that doesn't exist is
+flagged in the same column ("test file X not found") and keeps the finding
+out of the auto-confirmed batch. The lead still verifies every claim;
 this only orders the work and catches the obvious misses.
 
 Symbols are found for Python, GDScript and common brace languages (see
@@ -82,13 +84,24 @@ def symbol_check(root: str, path: str, symbol: str, evidence: str, skip: bool = 
     return f"{where}, evidence {'partly ' if inside else ''}outside"
 
 
+def symbol_column(root: str, finding: dict, skip: bool = False) -> str:
+    """The symbol check for a finding, plus `; test file X not found` when its
+    test_file doesn't exist (a fixer given a missing file can only fail)."""
+    result = symbol_check(root, finding.get("file", ""), finding.get("symbol", ""),
+                          finding.get("evidence", ""), skip=skip)
+    test_file = finding.get("test_file", "")
+    if test_file and not os.path.isfile(os.path.join(root, test_file)):
+        result += f"; test file {test_file} not found"
+    return result
+
+
 FIELDS = ("title", "severity", "confidence", "kind", "file", "symbol", "evidence", "situation", "fix",
           "test_file", "related")
 
 
 def passes_checks(finding: dict) -> bool:
-    """Evidence found in the file, and (unless symbols weren't checked) the
-    symbol exists and holds the evidence."""
+    """Evidence found in the file, the test file exists, and (unless symbols
+    weren't checked) the symbol exists and holds the evidence."""
     return finding["evidence_check"] == "ok" and not any(
         word in finding["symbol_check"] for word in ("not found", "outside"))
 
@@ -145,8 +158,7 @@ def main() -> None:
         for finding in review.get("findings", []):
             file, evidence = finding.get("file", ""), finding.get("evidence", "")
             finding = dict(finding, model=who, evidence_check=evidence_found(args.root, file, evidence),
-                           symbol_check=symbol_check(args.root, file, finding.get("symbol", ""), evidence,
-                                                     skip=args.no_symbols))
+                           symbol_check=symbol_column(args.root, finding, skip=args.no_symbols))
             key = (finding.get("file", ""), finding.get("symbol", ""))
             # One group per file and symbol: findings about the same function are
             # listed together, so overlapping and conflicting claims sit side by side.
