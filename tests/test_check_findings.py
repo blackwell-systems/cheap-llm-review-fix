@@ -5,7 +5,7 @@ import sys
 import tempfile
 import unittest
 
-from check_findings import build_prompt, find_test_files, report
+from check_findings import build_prompt, build_system, find_test_files, report
 from model_fix import build_context, finding_context
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -63,11 +63,12 @@ class PromptTest(RepoTest):
         self.assertNotIn("_model", prompt)
         self.assertNotIn("Godot", prompt)
 
-    def test_project_notes_are_appended_last(self):
-        prompt = build_prompt(self.root, FINDING, "t", [], "Unit tests have no database.")
-        self.assertTrue(prompt.rstrip().endswith("Unit tests have no database."))
-        self.assertIn("## Project notes", prompt)
-        self.assertNotIn("## Project notes", build_prompt(self.root, FINDING, "t", []))
+    def test_project_notes_go_in_the_system_prompt(self):
+        system = build_system("Unit tests have no database.")
+        self.assertTrue(system.rstrip().endswith("Unit tests have no database."))
+        self.assertIn("## Project notes", system)
+        self.assertNotIn("## Project notes", build_system())
+        self.assertNotIn("Unit tests have no database.", build_prompt(self.root, FINDING, "t", [], "Unit tests have no database."))
 
     def test_missing_context_file_is_marked(self):
         finding = dict(FINDING, test_file="tests/test_nope.py")
@@ -98,7 +99,8 @@ class CommandTest(RepoTest):
         self.assertIn("2 of 2 findings ready", stdout)
         with open(os.path.join(work, "1.md"), encoding="utf-8") as handle:
             prompt = handle.read()
-        self.assertIn("Integration tests use the client fixture.", prompt)
+        with open(os.path.join(work, "1.system.md"), encoding="utf-8") as handle:
+            self.assertIn("Integration tests use the client fixture.", handle.read())
         self.assertIn("OUTLINE: tests/test_other.py", prompt)
         self.assertIn("tests/test_cart.py\ntests/test_other.py\nweb/app.spec.ts", prompt)
         self.assertIn("| 1 | add ignores the limit | yes | yes | yes | yes | src/cart.py:LIMIT |", text)

@@ -85,3 +85,19 @@ class AnswerObjectTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SystemMessageTest(unittest.TestCase):
+    def test_no_file_gives_no_system_message(self):
+        from ask_model import system_message
+        self.assertEqual(system_message(None), [])
+
+    def test_a_file_becomes_the_system_message(self):
+        import tempfile
+        from ask_model import system_message
+        with tempfile.NamedTemporaryFile("w", suffix=".md", delete=False) as handle:
+            handle.write("You fix one bug.")
+        try:
+            self.assertEqual(system_message(handle.name), [{"role": "system", "content": "You fix one bug."}])
+        finally:
+            os.remove(handle.name)

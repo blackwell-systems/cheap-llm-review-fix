@@ -297,7 +297,11 @@ def main() -> None:
     if args.rules:
         with open(args.rules, encoding="utf-8") as handle:
             rules += "\n## Project rules\n\n" + handle.read().strip() + "\n"
-    base = rules + "\n## Task\n\n" + task + "\n\n## Code\n\n" + build_context(root, args.context, args.outline)
+    # The role and standing rules go in the system prompt; the task and code in the message.
+    system_path = os.path.join(args.out_dir, f"{name}.system.md")
+    with open(system_path, "w", encoding="utf-8") as handle:
+        handle.write(rules)
+    base = "## Task\n\n" + task + "\n\n## Code\n\n" + build_context(root, args.context, args.outline)
     record = {"task": name, "model": args.model, "attempts": [], "outcome": "failed"}
     feedback = ""
     started = time.time()
@@ -308,6 +312,7 @@ def main() -> None:
             handle.write(base + feedback)
         set_status(args.out_dir, name, f"attempt {attempt}: asking")
         cmd = [sys.executable, os.path.join(HERE, "ask_model.py"), "--prompt-file", prompt_path,
+               "--system-file", system_path,
                "--json-schema", os.path.join(HERE, "patch_schema.json"), "--model", args.model,
                "--effort", args.effort, "--max-tokens", str(args.max_tokens), "--out", answer_path]
         for provider in args.provider:

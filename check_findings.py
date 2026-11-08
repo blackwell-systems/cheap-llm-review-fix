@@ -32,12 +32,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from model_fix import build_context, finding_context, resolve_provider  # noqa: E402
 
-PROMPT = """You check whether a code-review finding is ready to hand to a fixer model. The fixer will see
-exactly the finding and the code below, nothing else, and must answer with exact edits plus a test
-that fails without the fix, run with the project's test runner. Judge the finding as a task, not the
-fixer. Be concrete.
+SYSTEM = """You check whether a code-review finding is ready to hand to a fixer model. The fixer will see
+exactly the finding and the code in the message, nothing else, and must answer with exact edits plus a
+test that fails without the fix, run with the project's test runner. Judge the finding as a task, not
+the fixer. Be concrete.
+"""
 
-## Finding
+PROMPT = """## Finding
 
 {finding}
 
@@ -76,10 +77,15 @@ def build_prompt(root: str, finding: dict, tests: str, outlines: list[str], note
     code = build_context(root, present, outlines)
     code += "".join(f"===== MISSING FILE: {spec} =====\n" for spec in context if spec not in present)
     shown = {k: v for k, v in finding.items() if not k.startswith("_")}
-    prompt = PROMPT.format(finding=json.dumps(shown, indent=1), tests=tests, code=code)
+    return PROMPT.format(finding=json.dumps(shown, indent=1), tests=tests, code=code)
+
+
+def build_system(notes: str = "") -> str:
+    """The system prompt: the reviewer's role, plus the project notes (what the
+    test folders mean, test levels), which are the same for every finding."""
     if notes.strip():
-        prompt += "\n## Project notes\n\n" + notes.strip() + "\n"
-    return prompt
+        return SYSTEM + "\n## Project notes\n\n" + notes.strip() + "\n"
+    return SYSTEM
 
 
 def check(root: str, finding: dict, tests: str, notes: str, args: argparse.Namespace, workdir: str,
@@ -88,10 +94,14 @@ def check(root: str, finding: dict, tests: str, notes: str, args: argparse.Names
     out_path = os.path.join(workdir, f"{number}.json")
     with open(prompt_path, "w", encoding="utf-8") as handle:
         handle.write(build_prompt(root, finding, tests, args.outline, notes))
+    system_path = os.path.join(workdir, f"{number}.system.md")
+    with open(system_path, "w", encoding="utf-8") as handle:
+        handle.write(build_system(notes))
     if args.answer_file:
         shutil.copyfile(args.answer_file, out_path)
     else:
         cmd = [sys.executable, os.path.join(HERE, "ask_model.py"), "--prompt-file", prompt_path,
+               "--system-file", system_path,
                "--json-schema", os.path.join(HERE, "readiness_schema.json"), "--model", args.model,
                "--effort", args.effort, "--out", out_path]
         for provider in args.provider:

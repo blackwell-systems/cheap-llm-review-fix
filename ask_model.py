@@ -104,6 +104,14 @@ def _escape_stray_quotes(text: str, decoder: json.JSONDecoder, tries: int = 200)
     return None
 
 
+def system_message(path: str | None) -> list[dict]:
+    """The system message from `path`, or none."""
+    if not path:
+        return []
+    with open(path, encoding="utf-8") as handle:
+        return [{"role": "system", "content": handle.read()}]
+
+
 def answer_object(text: str, schema: dict) -> tuple[Any, str]:
     """The JSON object in a model's reply. Models sometimes echo the schema
     or add prose around the answer, so every top-level object is decoded and
@@ -138,6 +146,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--prompt", default="", help="question text")
     parser.add_argument("--prompt-file", help="read the question from a file")
+    parser.add_argument("--system-file", help="a system prompt (role and standing rules) sent as its own "
+                        "message, separate from the task; providers can cache it across calls")
     parser.add_argument("--file", action="append", default=[], help="text file to attach (repeatable)")
     parser.add_argument("--image", action="append", default=[], help="image to attach (repeatable)")
     parser.add_argument("--model", default=DEFAULT_MODEL)
@@ -170,7 +180,7 @@ def main() -> None:
     content = [{"type": "text", "text": text}] + [image_part(path) for path in args.image]
     body = {
         "model": args.model,
-        "messages": [{"role": "user", "content": content}],
+        "messages": system_message(args.system_file) + [{"role": "user", "content": content}],
         "max_tokens": args.max_tokens,
         # Reasoning is streamed (not excluded) only so progress can show the model
         # thinking; it is counted, never saved. It is billed either way.
