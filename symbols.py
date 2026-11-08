@@ -238,3 +238,182 @@ def symbol_range(lines: list[str], symbol: str, path: str = "") -> tuple[int, in
     if ext in INDENT_EXTS or not path:
         return _indent_range(lines, name, assignments=ext == ".py")
     return None
+
+
+# ---------------------------------------------------------------------------
+# Outlines: the declarations of a file, for a fixer shown only part of it.
+
+OUTLINE_LIMIT = 200
+MAX_OUTLINE_LINE = 200
+C_EXTS = {".c", ".cc", ".cpp", ".h", ".hpp"}
+OUTLINE_EXTS = INDENT_EXTS | BRACE_EXTS
+
+GD_DECL = re.compile(r"^(?:@\w+(?:\([^)]*\))?\s+)*(?:static\s+)?(?:extends|class_name|class|const|var|enum|signal|func)\b")
+PY_DECL = re.compile(r"^(?:async\s+def|def|class)\s+\w+")
+PY_FIELD = re.compile(r"^[A-Za-z_]\w*\s*(?::[^=]+)?=(?!=)")
+PY_ANNOTATION = re.compile(r"^[A-Za-z_]\w*\s*:\s*[^=\s]")
+PY_NOT_NAMES = {"else", "try", "finally", "except", "lambda", "case", "default", "if", "elif", "while", "for",
+                "with", "match"}
+CLASS_LINE = re.compile(r"^(?:@\w+(?:\([^)]*\))?\s+)*class\b")
+
+MODIFIERS = (r"(?:(?:export|default|declare|abstract|async|public|private|protected|internal|static|final|"
+             r"override|open|sealed|partial|virtual|inline|readonly|unsafe|extern|data|inner|suspend|operator|"
+             r"mutating|nonisolated|fileprivate|constexpr|volatile|synchronized|native|transient|companion|"
+             r"lateinit|pub(?:\([^)]*\))?)\s+)*")
+KEYWORD_DECL = re.compile(
+    rf"^{MODIFIERS}(?:class|struct|interface|enum|trait|impl|type|object|protocol|extension|union|record|"
+    r"namespace|module|mod|function\*?|func|fn|fun|def|const|let|var|val|static|typedef)\s+\S")
+TOKEN = r"[\w$<>\[\],.?*&:~]+"
+METHOD = re.compile(rf"^{MODIFIERS}((?:{TOKEN}\s+)*)([\w$~]+)\s*(?:<[^>()]*>)?\s*\(")
+TYPED_FIELD = re.compile(rf"^{MODIFIERS}[A-Za-z_$][\w$]*[?!]?\s*:\s*[^:\s=][^;]*[;,=]?\s*$")
+C_FIELD = re.compile(rf"^{MODIFIERS}{TOKEN}(?:\s+{TOKEN})*\s+[*&]*[\w$]+(?:\[[^\]]*\])?\s*(?:=[^=].*)?;\s*$")
+ASSIGN_FIELD = re.compile(rf"^{MODIFIERS}[A-Za-z_$#][\w$]*\s*=[^=>]")
+GO_FIELD = re.compile(r"^[A-Za-z_]\w*(?:\s*,\s*\w+)*\s+[\w\[\]*.{}]+\s*$")
+CONTAINER_HEADER = re.compile(r"\b(?:class|struct|interface|enum|trait|impl|object|protocol|extension|union|record)\b")
+TRANSPARENT_HEADER = re.compile(r"\b(?:namespace|module)\b")
+LEADING_ANNOTATION = re.compile(r"^@[\w.]+(?:\([^)]*\))?\s*")
+
+
+def _indent_unit(lines: list[str]) -> int:
+    """Width of one indentation step made of spaces (4 when unclear)."""
+    widths = []
+    previous = ""
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        lead = line[:len(line) - len(line.lstrip())]
+        if previous.endswith(":") and lead and set(lead) == {" "}:
+            widths.append(len(lead))
+        previous = stripped
+    return min(widths) if widths else 4
+
+
+def _level(line: str, unit: int) -> int:
+    lead = line[:len(line) - len(line.lstrip())]
+    return lead.count("\t") + lead.count(" ") // unit
+
+
+def _indent_outline(lines: list[str], ext: str) -> list[int]:
+    """Line numbers (1-based) of the declarations of a Python or GDScript
+    file at the top level and one level into a class."""
+    unit = _indent_unit(lines)
+    kept: list[int] = []
+    in_class = False
+    quote = ""
+    for number, line in enumerate(lines, 1):
+        inside_string = bool(quote)
+        for mark in ('"""', "'''"):
+            if quote == mark:
+                if mark in line:
+                    quote = ""
+            elif not quote and line.count(mark) % 2 == 1:
+                quote = mark
+        stripped = line.strip()
+        if inside_string or not stripped or stripped.startswith("#"):
+            continue
+        level = _level(line, unit)
+        if level > 1:
+            continue
+        if level == 1 and not in_class:
+            continue
+        if ext == ".py":
+            first = re.match(r"\w+", stripped)
+            hit = bool(PY_DECL.match(stripped) or PY_FIELD.match(stripped)
+                       or (PY_ANNOTATION.match(stripped) and first and first.group() not in PY_NOT_NAMES))
+        else:
+            hit = bool(GD_DECL.match(stripped))
+        if hit:
+            kept.append(number)
+        if level == 0 and not (stripped.startswith("@") and " " not in stripped):
+            in_class = bool(CLASS_LINE.match(stripped))
+    return kept
+
+
+def _is_method_header(code: str, in_container: bool, depth: int, ext: str) -> bool:
+    text = code
+    while LEADING_ANNOTATION.match(text):
+        text = LEADING_ANNOTATION.sub("", text, count=1)
+    match = METHOD.match(text)
+    if not match:
+        return False
+    types = match.group(1).split()
+    name = match.group(2)
+    if name in CONTROL_WORDS or CONTROL_WORDS & set(types):
+        return False
+    if types:
+        # `Type name(...)`: a function at the top level only in C-like files, in a class body anywhere.
+        return in_container or (depth == 0 and ext in C_EXTS)
+    # A bare `name(...)`: a constructor or an interface method, only inside a type body.
+    if not in_container:
+        return False
+    rest = text[match.end():]
+    return not text.rstrip().endswith(";") or "):" in text or ") :" in text or "->" in rest
+
+
+def _brace_outline(lines: list[str], ext: str) -> list[int]:
+    """Line numbers (1-based) of declarations at the top level and one level
+    into a type body (class, struct, interface, enum, trait, impl, object ...).
+    Braces are counted with `code_only`; a `namespace` or `module` block does
+    not count as a level."""
+    kept: list[int] = []
+    stack: list[tuple[bool, bool]] = []  # (transparent, container)
+    state: dict = {}
+    statement = ""
+    for number, line in enumerate(lines, 1):
+        code = code_only(line, state).strip()
+        if not code:
+            continue
+        levels = [entry for entry in stack if not entry[0]]
+        depth = len(levels)
+        in_container = depth == 1 and levels[0][1]
+        if depth == 0 or in_container:
+            plain = code.lstrip()
+            while LEADING_ANNOTATION.match(plain):
+                plain = LEADING_ANNOTATION.sub("", plain, count=1)
+            hit = False
+            if plain and not plain.startswith(("#", "}", ")")):
+                hit = bool(KEYWORD_DECL.match(plain)) or _is_method_header(plain, in_container, depth, ext)
+                if not hit and in_container:
+                    hit = bool(TYPED_FIELD.match(plain) or C_FIELD.match(plain) or ASSIGN_FIELD.match(plain)
+                               or (ext == ".go" and GO_FIELD.match(plain)))
+            if hit:
+                kept.append(number)
+        segment = 0
+        for index, char in enumerate(code):
+            if char == "{":
+                header = f"{statement} {code[segment:index]}"
+                transparent = bool(TRANSPARENT_HEADER.search(header))
+                stack.append((transparent, not transparent and bool(CONTAINER_HEADER.search(header))))
+                statement, segment = "", index + 1
+            elif char == "}":
+                if stack:
+                    stack.pop()
+                statement, segment = "", index + 1
+            elif char == ";":
+                statement, segment = "", index + 1
+        statement += " " + code[segment:]
+    return kept
+
+
+def outline(lines: list[str], path: str, limit: int = OUTLINE_LIMIT) -> list[str] | None:
+    """The declarations of a file, each as `N: text` (N the 1-based line
+    number), or None when the language isn't supported. Python and GDScript
+    are read by indentation: classes, functions and methods, constants,
+    variables, enums, signals (GDScript `extends` and `class_name` too), at the
+    top level and one level into a class. Brace languages (BRACE_EXTS) are read
+    by brace depth: classes, structs, interfaces, enums, traits, impls,
+    functions, methods, constants and fields at the top level and one level
+    into a type body. The regexes are per family and approximate. At most
+    `limit` lines, then a count of the rest."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in INDENT_EXTS:
+        numbers = _indent_outline(lines, ext)
+    elif ext in BRACE_EXTS:
+        numbers = _brace_outline(lines, ext)
+    else:
+        return None
+    result = [f"{n}: {lines[n - 1].rstrip()[:MAX_OUTLINE_LINE]}" for n in numbers[:limit]]
+    if len(numbers) > limit:
+        result.append(f"... {len(numbers) - limit} more declarations")
+    return result

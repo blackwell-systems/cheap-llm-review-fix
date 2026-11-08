@@ -177,12 +177,44 @@ class EndToEndTest(unittest.TestCase):
         self.assertEqual(record["outcome"], "declined")
         self.assertEqual(read(self.repo, "calc.py"), CODE)
 
+    def test_missing_context_file_writes_an_error_record_and_exits_nonzero(self):
+        os.remove(os.path.join(self.repo, "test_calc.py"))
+        self.git("commit", "-qam", "drop test")
+        result, record = self.run_fix(self.answer("    return x * 3\n"))
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(record["outcome"], "error")
+        self.assertIn("test_calc.py", record["reason"])
+        self.assertEqual(record["attempts"], [])
+        self.assertEqual(read(self.repo, "calc.py"), CODE)
+
+    def test_prompt_shows_an_outline_of_the_partly_shown_file(self):
+        self.run_fix(self.answer("    return x * 3\n"))
+        with open(os.path.join(self.tmp.name, "out", "review-1.prompt1.md")) as handle:
+            prompt = handle.read()
+        self.assertIn("===== OUTLINE: calc.py (declarations only, with line numbers; not for `find`)", prompt)
+        self.assertIn("1: def double(x):", prompt)
+        self.assertNotIn("OUTLINE: test_calc.py", prompt)  # the test file is shown whole
+
+    def test_outline_flag_adds_a_file(self):
+        write(self.repo, "helpers.py", "def make():\n    pass\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "helpers")
+        out_dir = os.path.join(self.tmp.name, "out")
+        subprocess.run(
+            [sys.executable, os.path.join(ROOT, "model_fix.py"), "--finding", os.path.join(self.tmp.name, "review.json:1"),
+             "--worktree", self.repo, "--out-dir", out_dir, "--answer-file", self.answer("    return x * 3\n"),
+             "--tries", "1", "--outline", "helpers.py", "--test-cmd", "python3 -m unittest"],
+            capture_output=True, text=True)
+        with open(os.path.join(out_dir, "review-1.prompt1.md")) as handle:
+            self.assertIn("OUTLINE: helpers.py", handle.read())
+
     def test_prompt_contains_only_named_code(self):
         self.run_fix(self.answer("    return x * 3\n"))
         with open(os.path.join(self.tmp.name, "out", "review-1.prompt1.md")) as handle:
             prompt = handle.read()
         self.assertIn("def triple", prompt)
-        self.assertNotIn("def double", prompt)
+        self.assertNotIn("return x + x", prompt)  # double's body: only its outline line is shown
+        self.assertIn("1: def double(x):", prompt)
         self.assertIn("test_calc.py", prompt)
 
 

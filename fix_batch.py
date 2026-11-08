@@ -8,9 +8,12 @@ Each fix that passes its tests is committed in the worktree; the lead then
 reads all the diffs in one pass and merges once. Watch a running batch with
 `fix_status.py <out-dir>`.
 
-  fix_batch.py batch.json --worktree ../myproj-fixes --model z-ai/glm-5.3-flash \
-      --provider z-ai --test-cmd "pytest {test_file}" --rules examples/rules_python.md \
-      --out-dir fixes
+  fix_batch.py batch.json --worktree ../myproj-fixes \
+      --test-cmd "pytest {test_file}" --rules examples/rules_python.md --out-dir fixes
+
+The default fixer is Claude Haiku 5.5 (model_fix.py picks its providers and
+strict schema). For MiMo or GLM: --model xiaomi/mimo-v2.6-pro --provider
+deepinfra --strict-schema, or --model z-ai/glm-5.3-flash --provider z-ai.
 """
 import argparse
 import json
@@ -26,7 +29,7 @@ def main() -> None:
     parser.add_argument("batch", help="review-format JSON of confirmed findings")
     parser.add_argument("--worktree", required=True)
     parser.add_argument("--out-dir", required=True)
-    parser.add_argument("--model", default="z-ai/glm-5.3-flash")
+    parser.add_argument("--model", default="anthropic/claude-haiku-5.5")
     parser.add_argument("--provider", action="append", default=[])
     parser.add_argument("--strict-schema", action="store_true", help="passed on (use for MiMo on DeepInfra)")
     parser.add_argument("--test-cmd", help="test command template passed to model_fix.py "
@@ -34,6 +37,8 @@ def main() -> None:
     parser.add_argument("--rules", help="project rules file passed to model_fix.py")
     parser.add_argument("--tries", type=int, help="attempts per finding (model_fix.py default: 2)")
     parser.add_argument("--max-tokens", type=int, help="output limit per call (model_fix.py default: 64000)")
+    parser.add_argument("--outline", action="append", default=[],
+                        help="passed on to model_fix.py: also show this file's declarations; repeatable")
     parser.add_argument("--only", default="", help="finding numbers to run (from 1), comma separated")
     args = parser.parse_args()
 
@@ -60,6 +65,8 @@ def main() -> None:
             cmd += ["--tries", str(args.tries)]
         if args.max_tokens:
             cmd += ["--max-tokens", str(args.max_tokens)]
+        for path in args.outline:
+            cmd += ["--outline", path]
         result = subprocess.run(cmd, capture_output=True, text=True)
         print((result.stdout.strip().splitlines() or [result.stderr.strip()[-300:]])[-1], flush=True)
     subprocess.run([sys.executable, os.path.join(HERE, "fix_status.py"), args.out_dir])

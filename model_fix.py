@@ -11,8 +11,16 @@ on any failure the model gets the error and one more try (--tries). A passing
 fix is committed in the worktree for the lead to review and merge.
 
   model_fix.py --finding batch.json:1 --worktree ../myproj-fixes \
-      --model xiaomi/mimo-v2.6-pro --provider deepinfra --strict-schema \
       --test-cmd "pytest {test_file}" --rules examples/rules_python.md --out-dir fixes
+
+The default model is Claude Haiku 5.5 (`anthropic/claude-haiku-5.5`), through
+Google Vertex then Anthropic with the provider-enforced schema. For MiMo or
+GLM pass --model, --provider and (MiMo on DeepInfra) --strict-schema.
+
+After the named code the model gets an outline (declarations only, with line
+numbers, marked not for `find`) of every file it was shown part of, plus any
+file given with --outline. If a context file is missing, the result record
+says outcome "error" with the reason and the exit status is 1.
 
 --test-cmd is a template: `{tests}` is the filter (--tests, default the test
 file's stem) and `{test_file}` its path. Default: `./run_tests.sh {tests}`.
@@ -29,9 +37,12 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from symbols import BRACE_EXTS, INDENT_EXTS, symbol_range  # noqa: E402
+from symbols import BRACE_EXTS, INDENT_EXTS, OUTLINE_LIMIT, outline, symbol_range  # noqa: E402
 
 DEFAULT_TEST_CMD = "./run_tests.sh {tests}"
+DEFAULT_MODEL = "anthropic/claude-haiku-5.5"
+# Providers that enforce the patch schema (Bedrock doesn't support strict mode).
+ANTHROPIC_PROVIDERS = ["google-vertex", "anthropic"]
 
 RULES = """You are fixing one small, well-understood problem in a codebase. Rules:
 - Change as little as possible; touch only the code shown. Don't refactor or rename.
@@ -61,6 +72,63 @@ def context_block(root: str, spec: str) -> str:
     body = "\n".join(lines[start - 1:end])
     return (f"===== FILE: {path} (lines {start} to {end} of {len(lines)}: `{symbol}`) =====\n{body}\n"
             f"===== END FILE: {path} =====\n")
+
+
+def outline_block(root: str, path: str, limit: int = OUTLINE_LIMIT) -> str:
+    """The declarations of a file (classes, functions, constants, fields ...,
+    top level and one level in, with line numbers) so a fixer shown one
+    function also knows the members and helpers around it. Empty for a
+    language the outline doesn't know."""
+    with open(os.path.join(root, path), encoding="utf-8") as handle:
+        lines = handle.read().splitlines()
+    found = outline(lines, path, limit)
+    if found is None:
+        print(f"warning: no outline for {os.path.splitext(path)[1] or path}; {path} left out", file=sys.stderr)
+        return ""
+    return (f"===== OUTLINE: {path} (declarations only, with line numbers; not for `find`) =====\n"
+            + "\n".join(found) + f"\n===== END OUTLINE: {path} =====\n")
+
+
+def shown_whole(spec: str) -> bool:
+    """Whether the context spec shows its whole file (no symbol, or a language
+    without symbol support, where context_block falls back to the whole file)."""
+    path, _, symbol = spec.partition(":")
+    return not symbol or os.path.splitext(path)[1].lower() not in INDENT_EXTS | BRACE_EXTS
+
+
+def build_context(root: str, specs: list[str], outlines: list[str] = ()) -> str:
+    """The code a fixer sees: each named symbol or whole file, then an outline
+    of every file it was shown part of, plus the files named in `outlines`
+    (test helpers, for example). Files that don't exist are skipped."""
+    text = "".join(context_block(root, spec) for spec in specs)
+    whole = {spec.partition(":")[0] for spec in specs if shown_whole(spec)}
+    partial = [spec.partition(":")[0] for spec in specs if not shown_whole(spec)]
+    for path in dict.fromkeys(partial + list(outlines)):
+        if path in whole:
+            continue
+        if os.path.isfile(os.path.join(root, path)):
+            text += outline_block(root, path)
+        else:
+            print(f"warning: no outline for {path}: file not found", file=sys.stderr)
+    return text
+
+
+def finding_context(finding: dict) -> list[str]:
+    """The context specs a fixer is given for a finding: its symbol, the
+    `related` code and its test file, each once."""
+    specs = [f"{finding['file']}:{finding['symbol']}"] + list(finding.get("related") or [])
+    if finding.get("test_file"):
+        specs.append(finding["test_file"])
+    return list(dict.fromkeys(specs))
+
+
+def resolve_provider(model: str, providers: list[str], strict: bool) -> tuple[list[str], bool]:
+    """Provider order and strict-schema flag for a model. An `anthropic/` model
+    with no provider given goes to Google Vertex, then Anthropic, with the
+    provider-enforced (strict) schema; anything else is left as given."""
+    if model.startswith("anthropic/") and not providers:
+        return list(ANTHROPIC_PROVIDERS), True
+    return list(providers), strict
 
 
 def finding_task(finding: dict) -> str:
@@ -170,10 +238,15 @@ def main() -> None:
                         "or 'npm test -- {tests}' (default: %(default)s)")
     parser.add_argument("--rules", help="file of project rules appended to the built-in rules")
     parser.add_argument("--answer-file", help=argparse.SUPPRESS)  # canned patch JSON instead of a model call (tests)
-    parser.add_argument("--model", default="z-ai/glm-5.3-flash")
+    parser.add_argument("--model", default=DEFAULT_MODEL,
+                        help="default: Claude Haiku 5.5 (with no --provider: google-vertex then anthropic, strict "
+                        "schema). MiMo and GLM work too: --model xiaomi/mimo-v2.6-pro --provider deepinfra "
+                        "--strict-schema, or --model z-ai/glm-5.3-flash --provider z-ai")
     parser.add_argument("--provider", action="append", default=[])
     parser.add_argument("--effort", default="low")
     parser.add_argument("--tries", type=int, default=2)
+    parser.add_argument("--outline", action="append", default=[],
+                        help="also show this file's declarations (test helpers, for example); repeatable")
     parser.add_argument("--max-tokens", type=int, default=64000,
                         help="output limit per call, reasoning included (a model that thinks past it returns nothing)")
     parser.add_argument("--strict-schema", action="store_true",
@@ -182,6 +255,7 @@ def main() -> None:
     parser.add_argument("--out-dir", required=True, help="where prompts, answers and the result record go")
     args = parser.parse_args()
 
+    args.provider, args.strict_schema = resolve_provider(args.model, args.provider, args.strict_schema)
     root = os.path.abspath(args.worktree)
     args.out_dir = os.path.abspath(args.out_dir)
     os.makedirs(args.out_dir, exist_ok=True)
@@ -191,8 +265,7 @@ def main() -> None:
             finding = json.load(handle)["findings"][int(index) - 1]
         name = f"{os.path.splitext(os.path.basename(review_path))[0]}-{index}"
         task = finding_task(finding)
-        args.context = [f"{finding['file']}:{finding['symbol']}"] + list(finding.get("related") or []) \
-            + ([finding["test_file"]] if finding.get("test_file") else []) + args.context
+        args.context = finding_context(finding) + args.context
         args.test_file = args.test_file or finding.get("test_file") or None
     elif args.task:
         name = os.path.splitext(os.path.basename(args.task))[0]
@@ -200,6 +273,18 @@ def main() -> None:
             task = handle.read()
     else:
         sys.exit("Give --task or --finding.")
+    # The same code may be named twice (a symbol and its whole file); show it once.
+    args.context = list(dict.fromkeys(args.context))
+    missing = [spec.partition(":")[0] for spec in args.context
+               if not os.path.isfile(os.path.join(root, spec.partition(":")[0]))]
+    if missing:
+        # Record it, so a batch or the benchmark shows an error rather than nothing.
+        record = {"task": name, "model": args.model, "attempts": [], "outcome": "error",
+                  "reason": f"missing file(s): {', '.join(missing)}", "seconds": 0, "cost": 0}
+        with open(os.path.join(args.out_dir, f"{name}.result.json"), "w", encoding="utf-8") as handle:
+            json.dump(record, handle, indent=1)
+        set_status(args.out_dir, name, "error")
+        sys.exit(f"{name}: missing file(s) {', '.join(missing)}")
     if not args.tests and args.test_file:
         args.tests = os.path.splitext(os.path.basename(args.test_file))[0]
     if "{tests}" in args.test_cmd and not args.tests:
@@ -212,9 +297,7 @@ def main() -> None:
     if args.rules:
         with open(args.rules, encoding="utf-8") as handle:
             rules += "\n## Project rules\n\n" + handle.read().strip() + "\n"
-    # The same code may be named twice (a symbol and its whole file); show it once.
-    args.context = list(dict.fromkeys(args.context))
-    base = rules + "\n## Task\n\n" + task + "\n\n## Code\n\n" + "".join(context_block(root, c) for c in args.context)
+    base = rules + "\n## Task\n\n" + task + "\n\n## Code\n\n" + build_context(root, args.context, args.outline)
     record = {"task": name, "model": args.model, "attempts": [], "outcome": "failed"}
     feedback = ""
     started = time.time()
