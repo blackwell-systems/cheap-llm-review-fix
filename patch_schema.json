@@ -1,0 +1,70 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision",
+    "summary",
+    "edits"
+  ],
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "fix",
+        "not a bug"
+      ],
+      "description": "'not a bug' if the code shown is already correct and the reported problem can't happen; then leave edits empty and explain in summary."
+    },
+    "summary": {
+      "type": "string",
+      "description": "One or two sentences: what you changed and why."
+    },
+    "edits": {
+      "type": "array",
+      "description": "Changes to existing files, applied in order. Include the test edits too.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "file",
+          "find",
+          "replace"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "Repository path, exactly as given in the FILE headers."
+          },
+          "find": {
+            "type": "string",
+            "description": "One or more whole lines copied exactly, character for character (indentation included), from that file as shown. It must appear exactly once in the file: include enough lines to make it unique."
+          },
+          "replace": {
+            "type": "string",
+            "description": "The text that replaces `find` (whole lines, same indentation as the file)."
+          }
+        }
+      }
+    },
+    "new_files": {
+      "type": "array",
+      "description": "Files to create (they must not exist yet). Usually empty or left out.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "content"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
