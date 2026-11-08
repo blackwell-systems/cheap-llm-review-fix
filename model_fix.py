@@ -174,6 +174,8 @@ def main() -> None:
     parser.add_argument("--provider", action="append", default=[])
     parser.add_argument("--effort", default="low")
     parser.add_argument("--tries", type=int, default=2)
+    parser.add_argument("--max-tokens", type=int, default=64000,
+                        help="output limit per call, reasoning included (a model that thinks past it returns nothing)")
     parser.add_argument("--strict-schema", action="store_true",
                         help="have the provider enforce the patch schema (valid JSON every time; DeepInfra "
                         "supports it for MiMo, Z.ai doesn't for GLM)")
@@ -224,7 +226,7 @@ def main() -> None:
         set_status(args.out_dir, name, f"attempt {attempt}: asking")
         cmd = [sys.executable, os.path.join(HERE, "ask_model.py"), "--prompt-file", prompt_path,
                "--json-schema", os.path.join(HERE, "patch_schema.json"), "--model", args.model,
-               "--effort", args.effort, "--out", answer_path]
+               "--effort", args.effort, "--max-tokens", str(args.max_tokens), "--out", answer_path]
         for provider in args.provider:
             cmd += ["--provider", provider]
         if args.strict_schema:

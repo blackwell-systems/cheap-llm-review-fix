@@ -33,6 +33,7 @@ def main() -> None:
                         "(default there: ./run_tests.sh {tests})")
     parser.add_argument("--rules", help="project rules file passed to model_fix.py")
     parser.add_argument("--tries", type=int, help="attempts per finding (model_fix.py default: 2)")
+    parser.add_argument("--max-tokens", type=int, help="output limit per call (model_fix.py default: 64000)")
     parser.add_argument("--only", default="", help="finding numbers to run (from 1), comma separated")
     args = parser.parse_args()
 
@@ -57,6 +58,8 @@ def main() -> None:
             cmd += ["--rules", args.rules]
         if args.tries:
             cmd += ["--tries", str(args.tries)]
+        if args.max_tokens:
+            cmd += ["--max-tokens", str(args.max_tokens)]
         result = subprocess.run(cmd, capture_output=True, text=True)
         print((result.stdout.strip().splitlines() or [result.stderr.strip()[-300:]])[-1], flush=True)
     subprocess.run([sys.executable, os.path.join(HERE, "fix_status.py"), args.out_dir])
